@@ -1,0 +1,46 @@
+name: Safe Mirror Upstream
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # 每天凌晨3点跑一次（UTC）
+  workflow_dispatch:      # 也可以手动触发
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # 拉完整历史
+
+      - name: Add upstream
+        run: |
+          git remote add upstream https://github.com/prebid/prebid-server.git
+          git fetch upstream --prune --tags
+
+      - name: Safety check
+        id: check
+        run: |
+          # 拿所有分支的 commit 数（以 main 为基准，如果没有 main 改成 master）
+          FORK_COMMITS=$(git rev-list --count origin/master || echo 0)
+          UPSTREAM_COMMITS=$(git rev-list --count upstream/master || echo 0)
+
+          echo "Fork commits: $FORK_COMMITS"
+          echo "Upstream commits: $UPSTREAM_COMMITS"
+
+          # 如果 upstream 提交数突然变得非常少（可能是强推/删库）
+          if [ "$UPSTREAM_COMMITS" -lt "$(($FORK_COMMITS - 50))" ]; then
+            echo "⚠️ Upstream history looks suspicious (commit count dropped)!"
+            echo "safe=false" >> $GITHUB_OUTPUT
+          else
+            echo "safe=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Push all branches and tags
+        if: steps.check.outputs.safe == 'true'
+        run: |
+          # mirror 推送所有分支 & tags
+          git push origin --all
+          git push origin --tags
